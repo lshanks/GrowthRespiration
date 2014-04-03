@@ -242,15 +242,23 @@ model{
   }
   mu ~ dmnorm(m0,t0)
   tau ~ dwish(R,k)
+  x[2,4] <- xmis 
+  xmis ~ dnorm(0.2,1)
 }
 "
 w = ncol(ctable)
 data <- list(x = ctable,n=nrow(ctable),m0=rep(1/6,w),t0 = diag(1,w),R = diag(1e-6,w),k=w)
 
+#test
+w = 4
+data <- list(x = ctable[1:2,1:w],n=2,m0=rep(1/6,w),t0 = diag(1,w),R = diag(1e-6,w),k=w)
+
+
 j.model = jags.model(file=textConnection(MissingData),
                      data = data,
                      n.chains=1,
-                     n.adapt=10)
+                     n.adapt=10,
+                     inits = list(xmis = 0.1))
 
 
 
@@ -258,4 +266,86 @@ j.model = jags.model(file=textConnection(MissingData),
 ## stem:bloat (none for woody), growth rate, growth form, height, low growing grass
 ## roots: root depth, nitrogen fixation
 
-    
+Z = ctable
+m = nrow(ctable)
+
+###set up covariates
+Zorig <- as.matrix(Z)
+ncov <- ncol(as.matrix(Z))
+#find Zobs
+Zobs <- apply(Z,2,mean,na.rm=TRUE)
+## HACK##
+if(is.nan(Zobs[10])) Zobs[10] = Zobs[4]
+if(is.nan(Zobs[11])) Zobs[11] = Zobs[5]
+if(is.nan(Zobs[13])) Zobs[13] = Zobs[1]
+if(is.nan(Zobs[16])) Zobs[16] = Zobs[4]
+if(is.nan(Zobs[17])) Zobs[17] = Zobs[5]
+
+n.Z <- nrow(Z)
+for(i in 1:ncov){
+  Z[is.na(Zorig[,i]),i] <- Zobs[i]
+}
+
+#priors for Zmis
+
+#mean mu
+muZ.ic <- Zobs
+mu.Z0 <- rep(1/6,ncol(Z))  #post-normalization
+M.Z0 <- diag(rep(1,ncol(Z)))
+IM.Z0 <- solve(M.Z0)
+#cov V
+V.Z.ic <- diag(cov(Z,use="pairwise.complete.obs"))
+x.Z <- ncov + 2
+V.Z0.all <-  M.Z0*x.Z
+V.Z0 <- diag(V.Z0.all)
+IV.Z0 <- solve(V.Z0.all)
+mu.Z <- mu.Z0
+V.Z <- V.Z0.all 
+IV.Z <- solve(V.Z)
+
+library(MCMCpack)
+library(mvtnorm)
+
+## set storage
+start = 1
+ngibbs = 10
+muZgibbs <- matrix(0,nrow=ngibbs,ncol=ncov)
+VZgibbs <- matrix(0,nrow=ngibbs,ncol=ncov*(ncov+1)/2)
+Zgibbs <- Z*0
+
+#gibbs loop
+btimes <- 0
+for(g in start:ngibbs){
+  print(g)
+
+  ##missing Z's - mean
+  bigv <- solve(n.Z*IV.Z + IM.Z0)
+  smallv <- apply(Z %*% IV.Z,2,sum) + IM.Z0 %*% mu.Z0
+  mu.Z <- rmvnorm(1,bigv %*% smallv,bigv)   
+  muZgibbs[g,] <- mu.Z
+  
+##missing Z's - Variance
+u <- 0
+for(i in 1:m){ u <- u + crossprod(Z[i,]-mu.Z) }
+V.Z <- riwish(x.Z + n.Z, V.Z0.all + u)
+IV.Z <- solve(V.Z)
+VZgibbs[g,] <- vech(V.Z)
+
+##missing Z's - draw missing values
+for(i in 1:m){
+  for(j in 1:ncov){
+    if(is.na(Zorig[i,j])){
+      bigv <- 1/IV.Z[j,j]
+      smallv <- mu.Z[j]*IV.Z[j,j]
+      zcols <- 1:ncov; zcols <- zcols[zcols != j]
+      for(k in zcols){
+        smallv <- smallv + (Z[i,k] - mu.Z[k])*IV.Z[k,j]
+      }
+      Z[i,j] <- rnorm(1,bigv * smallv, sqrt(bigv))
+    }  	
+  }
+}
+  Zgibbs = Zgibbs + Z
+} #end Z.fillmissing
+Zbar = Zgibbs/ngibbs
+
