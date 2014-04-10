@@ -250,7 +250,7 @@ w = ncol(ctable)
 data <- list(x = ctable,n=nrow(ctable),m0=rep(1/6,w),t0 = diag(1,w),R = diag(1e-6,w),k=w)
 
 #test
-w = 4
+#w = 4
 data <- list(x = ctable[1:2,1:w],n=2,m0=rep(1/6,w),t0 = diag(1,w),R = diag(1e-6,w),k=w)
 
 
@@ -266,7 +266,16 @@ j.model = jags.model(file=textConnection(MissingData),
 ## stem:bloat (none for woody), growth rate, growth form, height, low growing grass
 ## roots: root depth, nitrogen fixation
 
-Z = ctable
+logit <- function(p){
+  log(p/(1-p))
+}
+
+ilogit <- function(x){
+  exp(x)/(1+exp(x))
+}
+
+
+Z = logit(ctable)
 m = nrow(ctable)
 
 ###set up covariates
@@ -286,12 +295,15 @@ for(i in 1:ncov){
   Z[is.na(Zorig[,i]),i] <- Zobs[i]
 }
 
+## initial guess
+Z.init = ilogit(Z)
+
 #priors for Zmis
 
 #mean mu
 muZ.ic <- Zobs
-mu.Z0 <- rep(1/6,ncol(Z))  #post-normalization
-M.Z0 <- diag(rep(1,ncol(Z)))
+mu.Z0 <- rep(logit(1/6),ncol(Z))  #post-normalization
+M.Z0 <- diag(rep(10,ncol(Z)))
 IM.Z0 <- solve(M.Z0)
 #cov V
 V.Z.ic <- diag(cov(Z,use="pairwise.complete.obs"))
@@ -308,7 +320,7 @@ library(mvtnorm)
 
 ## set storage
 start = 1
-ngibbs = 10
+ngibbs = 500
 muZgibbs <- matrix(0,nrow=ngibbs,ncol=ncov)
 VZgibbs <- matrix(0,nrow=ngibbs,ncol=ncov*(ncov+1)/2)
 Zgibbs <- Z*0
@@ -346,6 +358,24 @@ for(i in 1:m){
   }
 }
   Zgibbs = Zgibbs + Z
+  
+  if(g %% 500 == 0){ save.image("GR.RData")}
 } #end Z.fillmissing
-Zbar = Zgibbs/ngibbs
+Zbar = ilogit(Zgibbs/g)
 
+sum(is.na(Zbar))
+cbind(apply(Zbar,2,mean),apply(Z.init,2,mean),
+apply(ctable,2,mean,na.rm=TRUE))
+pdf("muZgibb.pdf")
+plot(as.mcmc(ilogit(muZgibbs)))
+dev.off()
+
+
+## PCA
+
+cluster.leaf <- kmeans(Z.init[,1:6],2)
+plot(Z.init[,2],Z.init[,3])
+plot(Z.init[,2],Z.init[,3],col=cluster.leaf$cluster)
+
+cluster.leaf.cost <- kmeans(t(t(Z.init[,1:6])*cost),2)
+plot(Z.init[,2],Z.init[,3],col=cluster.leaf.cost$cluster)
