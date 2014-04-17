@@ -331,16 +331,25 @@ for(g in start:ngibbs){
   print(g)
 
   ##missing Z's - mean
-  bigv <- solve(n.Z*IV.Z + IM.Z0)
-  smallv <- apply(Z %*% IV.Z,2,sum) + IM.Z0 %*% mu.Z0
-  mu.Z <- rmvnorm(1,bigv %*% smallv,bigv)   
+  bigv <- try(solve(n.Z*IV.Z + IM.Z0))
+  if(is.numeric(bigv)){
+    smallv <- apply(Z %*% IV.Z,2,sum) + IM.Z0 %*% mu.Z0
+    mu.Z <- rmvnorm(1,bigv %*% smallv,bigv)   
+  }
   muZgibbs[g,] <- mu.Z
+
   
 ##missing Z's - Variance
 u <- 0
 for(i in 1:m){ u <- u + crossprod(Z[i,]-mu.Z) }
+V.Z.orig <- V.Z
+IV.Z.orig <- IV.Z
 V.Z <- riwish(x.Z + n.Z, V.Z0.all + u)
-IV.Z <- solve(V.Z)
+IV.Z <- try(solve(V.Z))
+if(!is.numeric(IV.Z)){
+  IV.Z <- IV.Z.orig
+  V.Z <- V.Z.orig
+}
 VZgibbs[g,] <- vech(V.Z)
 
 ##missing Z's - draw missing values
@@ -371,11 +380,61 @@ plot(as.mcmc(ilogit(muZgibbs)))
 dev.off()
 
 
-## PCA
+## PCA & Cluster Analysis
+data.leaf <- Z.init[,1:6]
+data.stem <- Z.init[,7:12]
+data.root <- Z.init[,13:18]
 
-cluster.leaf <- kmeans(Z.init[,1:6],2)
+## cluster analysis on raw leaf data
+cluster.leaf <- kmeans(data.leaf,2)
 plot(Z.init[,2],Z.init[,3])
 plot(Z.init[,2],Z.init[,3],col=cluster.leaf$cluster)
 
-cluster.leaf.cost <- kmeans(t(t(Z.init[,1:6])*cost),2)
+cluster.stem <- kmeans(data.stem,2)
+cluster.root <- kmeans(data.root,2)
+
+## cluster analysis on leaf data weighted by construction costs
+cluster.leaf.cost <- kmeans(t(t(data.leaf)*cost),2)
+cluster.stem.cost <- kmeans(t(t(data.stem)*cost),2)
+cluster.root.cost <- kmeans(t(t(data.root)*cost),2)
 plot(Z.init[,2],Z.init[,3],col=cluster.leaf.cost$cluster)
+
+
+
+pca.leaf <- prcomp(data.leaf)
+pca.leaf$sdev/sum(pca.leaf$sdev)*100
+
+pca.leaf.cost <- prcomp(data.leaf,scale=cost)
+
+plot(pca.leaf)
+plot(pca.leaf$x[,1],pca.leaf$x[,2])
+
+
+cluster.pca.leaf <- kmeans(t(t(pca.leaf$x)*pca.leaf$sdev^2),2)
+plot(pca.leaf$x[,1],pca.leaf$x[,2],col=cluster.pca.leaf$cluster)
+
+cluster.pca.leaf <- kmeans(t(t(pca.leaf$x)*pca.leaf$sdev^2),4)
+
+phenol = rbinom(nrow(pca.leaf$x),1,0.5) ## replace this with real data
+phenol.char = c("E","D")
+plot(pca.leaf$x[,1],pca.leaf$x[,2],col=cluster.pca.leaf$cluster,pch=phenol.char[phenol+1])
+
+
+library(MASS)
+library(vegan)
+library("RPostgreSQL")
+
+dbparms <- list(driver="PostgreSQL" , user = "bety", dbname = "bety", password = "bety")
+con     <- db.open(dbparms)
+
+## species category gymnosperm?
+input = db.query(paste("SELECT * from inputs where id =",input.id),con)
+
+## fit species charactaristics to compositional pca
+ef.leaf <- envfit(pca.leaf.cost, phenol)
+plot (ef.leaf,pch=phenol.char[phenol+1])
+
+## fitting composition data to species charactaristics pca
+pca.phenol=prcomp(phenol)
+ef2.leaf <- envfit(pca.phenol, data.leaf)
+plot(ef2.leaf)
