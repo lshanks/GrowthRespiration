@@ -1,7 +1,7 @@
 require(PEcAn.all)
 logger.setQuitOnSevere(FALSE)
 settings <- read.settings("gr.settings.xml")
-get.trait.data()
+td <- get.trait.data(settings$pfts,settings$runs$dbfiles,settings$database,TRUE)
 
 ## rescale trait data
 trait.file = file.path(settings$pfts$pft$outdir, 'trait.data.Rdata')
@@ -13,7 +13,8 @@ for(i in 1:length(trait.data)){
 save(trait.data,file=trait.file)
 
 ##PEcAn - get posterior priors
-run.meta.analysis()
+#run.meta.analysis()
+run.meta.analysis(settings$pfts, settings$meta.analysis$iter, settings$run$dbfiles, settings$database)
 load(file.path(settings$pfts$pft$outdir,"trait.mcmc.Rdata"))
 load(file.path(settings$pfts$pft$outdir,"post.distns.Rdata"))
 
@@ -428,7 +429,8 @@ dbparms <- list(driver="PostgreSQL" , user = "bety", dbname = "bety", password =
 con     <- db.open(dbparms)
 
 ## species category gymnosperm?
-input = db.query(paste("SELECT * from inputs where id =",input.id),con)
+input = db.query(paste('SELECT "id","Category" FROM species'),con)
+#input = db.query(paste("SELECT * FROM species"),con)
 
 ## fit species charactaristics to compositional pca
 ef.leaf <- envfit(pca.leaf.cost, phenol)
